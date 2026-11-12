@@ -40,3 +40,14 @@ class InboxItemSerializer(serializers.ModelSerializer):
             "sent_at", "read_at", "acked_at",
         ]
         read_only_fields = fields
+
+
+class DraftRequestSerializer(serializers.Serializer):
+    """Input for AI drafting. The caller supplies notes only; local, author and status
+    are decided by the server, so anything else in the body is ignored."""
+
+    prompt = serializers.CharField(max_length=1000)
+    needs_ack = serializers.BooleanField(required=False, default=False)
+    audience_classifications = serializers.ListField(
+        child=serializers.CharField(max_length=100), required=False, default=list, max_length=20
+    )
