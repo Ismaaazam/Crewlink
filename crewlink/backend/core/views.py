@@ -1,5 +1,7 @@
 from django.contrib.auth import authenticate
 from django.db import connection
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
@@ -8,8 +10,9 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Announcement
+from .models import Announcement, AnnouncementRecipient
 from .permissions import IsAccount, IsLeader
+from .sending import send_announcement
 from .serializers import AnnouncementSerializer, LoginSerializer
 
 
@@ -97,3 +100,40 @@ class AnnouncementDetailView(AnnouncementScopedMixin, generics.RetrieveUpdateAPI
         if serializer.instance.status != Announcement.Status.DRAFT:
             raise Conflict("Only drafts can be edited.")
         serializer.save()
+
+
+class AnnouncementSendView(APIView):
+    """POST /api/announcements/<id>/send/
+
+    First call that wins the conditional UPDATE -> 202 and the recipients are created.
+    Any repeat or concurrent loser -> 200 with already_sent=true and nothing is created.
+    Not approved -> 409. Another local's announcement -> 404 (same as nonexistent).
+    """
+
+    permission_classes = [IsLeader]
+
+    def post(self, request, pk):
+        announcement = get_object_or_404(Announcement.objects.for_account(request.user), pk=pk)
+        if announcement.status == Announcement.Status.DRAFT:
+            raise Conflict("Announcement must be approved before it can be sent.")
+
+        won, created = send_announcement(announcement)
+        announcement.refresh_from_db()
+
+        counts = AnnouncementRecipient.objects.filter(announcement=announcement).aggregate(
+            recipients=Count("id"),
+            pushed=Count("id", filter=Q(sent_at__isnull=False)),
+            read=Count("id", filter=Q(read_at__isnull=False)),
+            acknowledged=Count("id", filter=Q(acked_at__isnull=False)),
+        )
+        return Response(
+            {
+                "id": announcement.id,
+                "status": announcement.status,
+                "sent_at": announcement.sent_at,
+                "already_sent": not won,
+                "recipients_created": created,
+                "counts": counts,
+            },
+            status=202 if won else 200,
+        )

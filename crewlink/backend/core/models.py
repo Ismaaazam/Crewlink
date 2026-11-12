@@ -2,7 +2,8 @@
 Data model.
 
 The brief supplied `locals`, `members` and `announcements`; their names and columns
-are kept as-is and only extended. New tables: `accounts`, `announcement_recipients`.
+are kept as-is and only extended. New tables: `accounts`, `announcement_recipients`,
+`push_log`.
 
 Tenant integrity is enforced in the database, not only in code: migration 0002 adds
 composite foreign keys so a row's local_id must match the local_id of the member /
@@ -203,3 +204,17 @@ class AnnouncementRecipient(models.Model):
             ),
             models.Index(fields=["member"], name="recipients_member_idx"),
         ]
+
+
+class PushLog(models.Model):
+    """Simulated push provider log. The one-to-one (unique recipient_id) is what makes
+    'one successful push per recipient' a database guarantee in this demo."""
+
+    recipient = models.OneToOneField(
+        AnnouncementRecipient, on_delete=models.CASCADE, related_name="push_log"
+    )
+    worker_id = models.CharField(max_length=100)
+    pushed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "push_log"
