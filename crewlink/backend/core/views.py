@@ -1,6 +1,8 @@
 from django.contrib.auth import authenticate
 from django.db import connection
-from django.db.models import Count, Q
+from django.db.models import Count, DateTimeField, F, Q, Value
+from django.db.models.functions import Coalesce
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.authtoken.models import Token
@@ -13,7 +15,7 @@ from rest_framework.views import APIView
 from .models import Announcement, AnnouncementRecipient
 from .permissions import IsAccount, IsLeader
 from .sending import send_announcement
-from .serializers import AnnouncementSerializer, LoginSerializer
+from .serializers import AnnouncementSerializer, InboxItemSerializer, LoginSerializer
 
 
 class Conflict(APIException):
@@ -136,4 +138,70 @@ class AnnouncementSendView(APIView):
                 "counts": counts,
             },
             status=202 if won else 200,
+        )
+
+
+# ------------------------------------------------------------- member inbox
+# Every query below is pinned to the caller's own member row. The URL carries only an
+# announcement id, never a recipient id or a member id, so there is no id a caller can
+# change to reach somebody else's row: an announcement that was not addressed to the
+# caller looks exactly like one that does not exist (404).
+def own_recipients(account):
+    return (
+        AnnouncementRecipient.objects.for_account(account)
+        .filter(member_id=account.member_id)
+        .select_related("announcement")
+    )
+
+
+class InboxListView(generics.ListAPIView):
+    """GET /api/me/inbox/ -- the durable inbox. Items exist from the moment the send
+    commits, whether or not the push was ever accepted, so a member who was offline
+    gets everything on reconnect. Contains no other member's data."""
+
+    permission_classes = [IsAccount]
+    serializer_class = InboxItemSerializer
+
+    def get_queryset(self):
+        return own_recipients(self.request.user).order_by("-announcement__sent_at", "-id")
+
+
+class InboxItemActionView(APIView):
+    """Base for read/ack. POST is idempotent: the first call stamps the timestamp, every
+    repeat returns the same item unchanged (the UPDATE only matches rows still NULL, so
+    concurrent duplicates cannot overwrite each other)."""
+
+    permission_classes = [IsAccount]
+
+    def post(self, request, pk):
+        item = get_object_or_404(own_recipients(request.user), announcement_id=pk)
+        self.apply(item)
+        item.refresh_from_db()
+        return Response(InboxItemSerializer(item).data)
+
+    def apply(self, item):
+        raise NotImplementedError
+
+
+class InboxReadView(InboxItemActionView):
+    """POST /api/me/inbox/<announcement_id>/read/"""
+
+    def apply(self, item):
+        AnnouncementRecipient.objects.filter(pk=item.pk, read_at__isnull=True).update(
+            read_at=timezone.now()
+        )
+
+
+class InboxAckView(InboxItemActionView):
+    """POST /api/me/inbox/<announcement_id>/ack/ -- only for announcements that asked
+    for acknowledgement. Acknowledging implies having read it, so read_at is filled in
+    if it was still empty (an existing read_at is kept)."""
+
+    def apply(self, item):
+        if not item.announcement.needs_ack:
+            raise Conflict("This announcement does not request acknowledgement.")
+        now = timezone.now()
+        AnnouncementRecipient.objects.filter(pk=item.pk, acked_at__isnull=True).update(
+            acked_at=now,
+            read_at=Coalesce(F("read_at"), Value(now), output_field=DateTimeField()),
         )
