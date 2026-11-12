@@ -18,6 +18,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "rest_framework",
+    "rest_framework.authtoken",
     "core",
 ]
 
@@ -59,9 +60,14 @@ DATABASES = {
     }
 }
 
-# Default-deny: every view must explicitly declare its permission.
+# Default-deny: a view that does not declare permission_classes is refused (DenyAll),
+# and core/checks.py fails `manage.py check` / runserver / tests if any route lacks one.
 REST_FRAMEWORK = {
-    "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.TokenAuthentication"],
+    "DEFAULT_PERMISSION_CLASSES": ["core.permissions.DenyAll"],
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,
 }
 
 AUTH_USER_MODEL = "core.Account"

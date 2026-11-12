@@ -17,6 +17,14 @@ from django.db.models import Q
 from django.utils import timezone
 
 
+class LocalScopedQuerySet(models.QuerySet):
+    """Every view reads tenant data through for_account(); the local comes from the
+    authenticated account, never from the request."""
+
+    def for_account(self, account):
+        return self.filter(local_id=account.local_id)
+
+
 class Local(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.TextField(unique=True)
@@ -40,6 +48,8 @@ class Member(models.Model):
     email = models.TextField()
     classification = models.TextField()
     status = models.TextField(choices=Status.choices, default=Status.ACTIVE)
+
+    objects = LocalScopedQuerySet.as_manager()
 
     class Meta:
         db_table = "members"
@@ -127,6 +137,8 @@ class Announcement(models.Model):
         Account, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )
 
+    objects = LocalScopedQuerySet.as_manager()
+
     class Meta:
         db_table = "announcements"
         constraints = [
@@ -166,6 +178,8 @@ class AnnouncementRecipient(models.Model):
     read_at = models.DateTimeField(null=True, blank=True)
     acked_at = models.DateTimeField(null=True, blank=True)
     attempts = models.PositiveIntegerField(default=0)
+
+    objects = LocalScopedQuerySet.as_manager()
 
     class Meta:
         db_table = "announcement_recipients"
