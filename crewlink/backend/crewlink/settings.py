@@ -64,6 +64,8 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }
 
+AUTH_USER_MODEL = "core.Account"
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
